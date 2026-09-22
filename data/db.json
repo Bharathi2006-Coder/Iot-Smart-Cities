@@ -1,0 +1,220 @@
+{
+  "users": [
+    {
+      "id": "usr_admin",
+      "username": "Admin",
+      "passwordHash": "e736f9ee07ee38d70267f43bea5022978bc8e4d502dc48b4fb79f470770206a2",
+      "role": "admin",
+      "createdAt": "2026-09-22T05:09:42.107Z"
+    },
+    {
+      "id": "usr_judge",
+      "username": "Judge",
+      "passwordHash": "339efc28ad72d8f3097f8cfc1b3118560deb228ddec95115ce5d87e834a5944a",
+      "role": "judge",
+      "createdAt": "2026-09-22T05:09:42.107Z"
+    }
+  ],
+  "tokens": {},
+  "settings": {
+    "college": "MEENAKSHI SUNDARAJAN ENGINEERING COLLEGE",
+    "autonomous": "Autonomous",
+    "managedBy": "I.I.E.T. Society",
+    "affiliatedTo": "Anna University",
+    "department": "Department of Civil Engineering",
+    "organizedBy": "Eco Design Club",
+    "eventName": "Euphoria'26",
+    "technicalEvent": "IoT Based Smart Cities Challenge",
+    "date": "25/09/2026 – Friday",
+    "time": "10:00 AM – 12:00 PM",
+    "venue": "MSEC Civil Block",
+    "eventStatus": "Event Started",
+    "round1Name": "Technical Quiz",
+    "round1Max": 50,
+    "round2Name": "IoT Based Simulation",
+    "round2Max": 50,
+    "totalMax": 100,
+    "tieBreakerRule": "1. IoT Based Simulation Score → 2. Technical Quiz Score → 3. Admin Manual Resolution"
+  },
+  "teams": [
+    {
+      "id": "team_01",
+      "teamNumber": "01",
+      "teamName": "EcoPulse Smart Grid",
+      "assignedJudge": "Judge",
+      "technicalQuizScore": 46,
+      "iotSimulationScore": 48,
+      "totalScore": 94,
+      "rank": 1,
+      "evaluationStatus": "Evaluated",
+      "evaluatedAt": "2026-09-22T05:09:42.107Z",
+      "createdAt": "2026-09-22T05:09:42.107Z",
+      "updatedAt": "2026-09-22T05:09:42.107Z",
+      "members": [
+        {
+          "id": "mem_01_1",
+          "name": "Kavitha Ramasamy",
+          "registerNumber": "311522103012",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840123456",
+          "department": "Civil Engineering",
+          "academicYear": "Final Year (IV)",
+          "attendance": "Present"
+        },
+        {
+          "id": "mem_01_2",
+          "name": "Arjun Swaminathan",
+          "registerNumber": "311522103008",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840123457",
+          "department": "Civil Engineering",
+          "academicYear": "Third Year (III)",
+          "attendance": "Present"
+        }
+      ]
+    },
+    {
+      "id": "team_02",
+      "teamNumber": "02",
+      "teamName": "Urban Flow Dynamics",
+      "assignedJudge": "Judge",
+      "technicalQuizScore": 44,
+      "iotSimulationScore": 47,
+      "totalScore": 91,
+      "rank": 2,
+      "evaluationStatus": "Evaluated",
+      "evaluatedAt": "2026-09-22T05:09:42.107Z",
+      "createdAt": "2026-09-22T05:09:42.107Z",
+      "updatedAt": "2026-09-22T05:09:42.107Z",
+      "members": [
+        {
+          "id": "mem_02_1",
+          "name": "Rohit Chandran",
+          "registerNumber": "311522103045",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840234567",
+          "department": "Civil Engineering",
+          "academicYear": "Final Year (IV)",
+          "attendance": "Present"
+        },
+        {
+          "id": "mem_02_2",
+          "name": "Divya Bharathi",
+          "registerNumber": "311522103019",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840234568",
+          "department": "Civil Engineering",
+          "academicYear": "Third Year (III)",
+          "attendance": "Present"
+        }
+      ]
+    },
+    {
+      "id": "team_03",
+      "teamNumber": "03",
+      "teamName": "AquaSense Drainage IoT",
+      "assignedJudge": "Judge",
+      "technicalQuizScore": 42,
+      "iotSimulationScore": 45,
+      "totalScore": 87,
+      "rank": 3,
+      "evaluationStatus": "Evaluated",
+      "evaluatedAt": "2026-09-22T05:09:42.107Z",
+      "createdAt": "2026-09-22T05:09:42.107Z",
+      "updatedAt": "2026-09-22T05:09:42.107Z",
+      "members": [
+        {
+          "id": "mem_03_1",
+          "name": "Manoj Kumar V",
+          "registerNumber": "311522103031",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840345678",
+          "department": "Civil Engineering",
+          "academicYear": "Final Year (IV)",
+          "attendance": "Present"
+        },
+        {
+          "id": "mem_03_2",
+          "name": "Sneha Murali",
+          "registerNumber": "311522103052",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840345679",
+          "department": "Civil Engineering",
+          "academicYear": "Third Year (III)",
+          "attendance": "Present"
+        }
+      ]
+    },
+    {
+      "id": "team_04",
+      "teamNumber": "04",
+      "teamName": "TerraCarbon Analytics",
+      "assignedJudge": "Judge",
+      "technicalQuizScore": 39,
+      "iotSimulationScore": 42,
+      "totalScore": 81,
+      "rank": 4,
+      "evaluationStatus": "Evaluated",
+      "evaluatedAt": "2026-09-22T05:09:42.107Z",
+      "createdAt": "2026-09-22T05:09:42.107Z",
+      "updatedAt": "2026-09-22T05:09:42.107Z",
+      "members": [
+        {
+          "id": "mem_04_1",
+          "name": "Praveen Balaji",
+          "registerNumber": "311522103040",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840456789",
+          "department": "Civil Engineering",
+          "academicYear": "Third Year (III)",
+          "attendance": "Present"
+        },
+        {
+          "id": "mem_04_2",
+          "name": "Ananya Sridhar",
+          "registerNumber": "311522103005",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840456790",
+          "department": "Civil Engineering",
+          "academicYear": "Second Year (II)",
+          "attendance": "Present"
+        }
+      ]
+    },
+    {
+      "id": "team_05",
+      "teamNumber": "05",
+      "teamName": "AeroClean Microclimate",
+      "assignedJudge": "Judge",
+      "technicalQuizScore": null,
+      "iotSimulationScore": null,
+      "totalScore": null,
+      "rank": null,
+      "evaluationStatus": "Not Evaluated",
+      "createdAt": "2026-09-22T05:09:42.107Z",
+      "updatedAt": "2026-09-22T05:09:42.107Z",
+      "members": [
+        {
+          "id": "mem_05_1",
+          "name": "Vigneshwaran K",
+          "registerNumber": "311522103061",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840567890",
+          "department": "Civil Engineering",
+          "academicYear": "Final Year (IV)",
+          "attendance": "Present"
+        },
+        {
+          "id": "mem_05_2",
+          "name": "Harini S",
+          "registerNumber": "311522103023",
+          "collegeName": "Meenakshi Sundarajan Engineering College",
+          "phoneNumber": "9840567891",
+          "department": "Civil Engineering",
+          "academicYear": "Third Year (III)",
+          "attendance": "Absent"
+        }
+      ]
+    }
+  ]
+}
