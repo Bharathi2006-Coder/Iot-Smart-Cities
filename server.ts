@@ -2,24 +2,464 @@ import express, { Request, Response, NextFunction } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
+import { MongoClient, Db, ObjectId } from 'mongodb';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
+app.disable('x-powered-by');
 
-// Path to durable persistent database file
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({
+    ok: true,
+    service: "Euphoria'26 Event Portal",
+    environment: process.env.NODE_ENV || 'development',
+    port: PORT,
+  });
+});
+
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+let mongoClient: MongoClient | null = null;
+let mongoDb: Db | null = null;
+let runtimeDb: DatabaseSchema | null = null;
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Password hashing utility using crypto
+async function connectMongoDb() {
+  if (mongoDb) {
+    return mongoDb;
+  }
+
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error('MONGODB_URI is missing. Add it to your .env file.');
+  }
+
+  mongoClient = new MongoClient(uri);
+  await mongoClient.connect();
+  mongoDb = mongoClient.db(process.env.DB_NAME || 'euphoria26');
+
+  const requiredCollections = ['users', 'teams', 'teamMembers', 'evaluations', 'eventSettings', 'auditLogs', 'tokens'];
+  const existingCollections = await mongoDb.listCollections().toArray();
+  const existingNames = new Set(existingCollections.map((collection) => collection.name));
+
+  for (const name of requiredCollections) {
+    if (!existingNames.has(name)) {
+      await mongoDb.createCollection(name);
+    }
+  }
+
+  await mongoDb.collection('users').createIndex({ username: 1 }, { unique: true }).catch(() => undefined);
+  await mongoDb.collection('teams').createIndex({ teamNumber: 1 }, { unique: true }).catch(() => undefined);
+  await mongoDb.collection('teams').createIndex({ assignedJudgeId: 1 }).catch(() => undefined);
+  await mongoDb.collection('teamMembers').createIndex({ teamId: 1 }).catch(() => undefined);
+  await mongoDb.collection('teamMembers').createIndex({ registerNumber: 1 }).catch(() => undefined);
+  await mongoDb.collection('evaluations').createIndex({ teamId: 1, judgeId: 1 }, { unique: true }).catch(() => undefined);
+  await mongoDb.collection('evaluations').createIndex({ totalScore: -1 }).catch(() => undefined);
+  await mongoDb.collection('evaluations').createIndex({ judgeId: 1 }).catch(() => undefined);
+  await mongoDb.collection('auditLogs').createIndex({ userId: 1 }).catch(() => undefined);
+  await mongoDb.collection('auditLogs').createIndex({ createdAt: -1 }).catch(() => undefined);
+  await mongoDb.collection('tokens').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }).catch(() => undefined);
+
+  return mongoDb;
+}
+
 function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password + '_euphoria_salt_2026').digest('hex');
+  return bcrypt.hashSync(password, 10);
+}
+
+function comparePassword(password: string, passwordHash: string): boolean {
+  return bcrypt.compareSync(password, passwordHash);
+}
+
+async function ensureSeedData() {
+  if (!mongoDb) {
+    return;
+  }
+
+  const users = mongoDb.collection('users');
+  const eventSettings = mongoDb.collection('eventSettings');
+
+  const adminUser = await users.findOne({ username: 'Admin', role: 'admin' });
+  if (!adminUser) {
+    await users.insertOne({
+      _id: new ObjectId(),
+      username: 'Admin',
+      passwordHash: hashPassword('admin@123'),
+      role: 'admin',
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+
+  const judgeUser = await users.findOne({ username: 'Judge', role: 'judge' });
+  if (!judgeUser) {
+    await users.insertOne({
+      _id: new ObjectId(),
+      username: 'Judge',
+      passwordHash: hashPassword('judge@123'),
+      role: 'judge',
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+
+  const settingsDoc = await eventSettings.findOne({ eventName: "Euphoria'26" });
+  if (!settingsDoc) {
+    await eventSettings.insertOne({
+      _id: new ObjectId(),
+      eventName: "Euphoria'26",
+      eventType: 'IoT Based Smart Cities Challenge',
+      collegeName: 'MEENAKSHI SUNDARAJAN ENGINEERING COLLEGE',
+      department: 'Department of Civil Engineering',
+      organizer: 'Eco Design Club',
+      date: '25/09/2026',
+      day: 'Friday',
+      time: '10:00 AM – 12:00 PM',
+      venue: 'MSEC Civil Block',
+      round1Name: 'Technical Quiz',
+      round1MaximumMarks: 50,
+      round2Name: 'IoT Based Simulation',
+      round2MaximumMarks: 50,
+      totalMaximumMarks: 100,
+      eventStatus: 'registration_open',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+}
+
+async function syncRuntimeDbToMongo(data: DatabaseSchema) {
+  if (!mongoDb) {
+    return;
+  }
+
+  const usersCollection = mongoDb.collection('users');
+  const teamsCollection = mongoDb.collection('teams');
+  const teamMembersCollection = mongoDb.collection('teamMembers');
+  const evaluationsCollection = mongoDb.collection('evaluations');
+  const settingsCollection = mongoDb.collection('eventSettings');
+  const tokensCollection = mongoDb.collection('tokens');
+  const auditLogsCollection = mongoDb.collection('auditLogs');
+
+  const userMap = new Map<string, any>();
+  const judgeMap = new Map<string, any>();
+
+  for (const user of await usersCollection.find({}).toArray()) {
+    userMap.set(String(user.username).toLowerCase(), user);
+    if (user.role === 'judge') {
+      judgeMap.set(String(user.username).toLowerCase(), user);
+    }
+  }
+
+  for (const user of data.users) {
+    const existingUser = userMap.get(String(user.username).toLowerCase());
+    if (existingUser) {
+      await usersCollection.updateOne(
+        { _id: existingUser._id },
+        {
+          $set: {
+            username: user.username,
+            passwordHash: user.passwordHash,
+            role: user.role,
+            isActive: true,
+            updatedAt: new Date(),
+          },
+        }
+      );
+    } else {
+      await usersCollection.insertOne({
+        _id: new ObjectId(),
+        username: user.username,
+        passwordHash: user.passwordHash,
+        role: user.role,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  const teamDocs = await teamsCollection.find({}).toArray();
+  for (const teamDoc of teamDocs) {
+    const teamKey = String(teamDoc.teamNumber);
+    const localTeam = data.teams.find((item) => item.teamNumber === teamKey);
+    if (!localTeam) {
+      await teamMembersCollection.deleteMany({ teamId: teamDoc._id });
+      await evaluationsCollection.deleteMany({ teamId: teamDoc._id });
+      await teamsCollection.deleteOne({ _id: teamDoc._id });
+    }
+  }
+
+  for (const team of data.teams) {
+    const judgeUser = judgeMap.get(String(team.assignedJudge || 'Judge').toLowerCase()) || await usersCollection.findOne({ username: 'Judge', role: 'judge' });
+
+    const teamQuery = { teamNumber: String(team.teamNumber) };
+    const existingTeam = await teamsCollection.findOne(teamQuery);
+    const teamRecord = {
+      teamNumber: String(team.teamNumber),
+      teamName: String(team.teamName),
+      assignedJudgeId: judgeUser ? judgeUser._id : null,
+      attendanceStatus: 'not_marked',
+      evaluationStatus: team.evaluationStatus === 'Evaluated' ? 'evaluated' : 'not_evaluated',
+      createdAt: new Date(team.createdAt || Date.now()),
+      updatedAt: new Date(team.updatedAt || Date.now()),
+      id: String(team.id || `team_${Date.now()}_${Math.random()}`),
+    };
+
+    if (existingTeam) {
+      await teamsCollection.updateOne(
+        { _id: existingTeam._id },
+        { $set: teamRecord }
+      );
+    } else {
+      await teamsCollection.insertOne({
+        _id: new ObjectId(),
+        ...teamRecord,
+      });
+    }
+
+    const insertedTeam = await teamsCollection.findOne(teamQuery);
+    await teamMembersCollection.deleteMany({ teamId: insertedTeam?._id });
+    for (const member of team.members) {
+      await teamMembersCollection.insertOne({
+        _id: new ObjectId(),
+        teamId: insertedTeam?._id,
+        name: member.name,
+        registerNumber: member.registerNumber,
+        collegeName: member.collegeName,
+        phoneNumber: member.phoneNumber,
+        department: member.department,
+        academicYear: member.academicYear,
+        attendance: member.attendance === 'Present' ? 'present' : 'absent',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+
+    const judgeRecord = await usersCollection.findOne({ username: team.assignedJudge || 'Judge', role: 'judge' });
+    if (judgeRecord) {
+      const evaluationDoc = {
+        teamId: insertedTeam?._id,
+        judgeId: judgeRecord._id,
+        technicalQuizScore: Number(team.technicalQuizScore ?? 0),
+        iotSimulationScore: Number(team.iotSimulationScore ?? 0),
+        totalScore: Number(team.totalScore ?? 0),
+        status: team.evaluationStatus === 'Evaluated' ? 'evaluated' : 'not_evaluated',
+        evaluatedAt: team.evaluatedAt ? new Date(team.evaluatedAt) : null,
+        updatedAt: new Date(team.updatedAt || Date.now()),
+      };
+
+      await evaluationsCollection.updateOne(
+        { teamId: insertedTeam?._id, judgeId: judgeRecord._id },
+        { $set: evaluationDoc },
+        { upsert: true }
+      );
+    }
+  }
+
+  const tokenDocs = Object.entries(data.tokens).map(([token, value]) => ({
+    token,
+    username: value.username,
+    role: value.role,
+    expiresAt: value.expiresAt,
+  }));
+
+  await tokensCollection.deleteMany({});
+  if (tokenDocs.length > 0) {
+    await tokensCollection.insertMany(tokenDocs);
+  }
+
+  const settingsDoc = { ...data.settings };
+  await settingsCollection.deleteMany({});
+  await settingsCollection.insertOne({
+    _id: new ObjectId(),
+    eventName: settingsDoc.eventName,
+    eventType: settingsDoc.technicalEvent,
+    collegeName: settingsDoc.college,
+    department: settingsDoc.department,
+    organizer: settingsDoc.organizedBy,
+    date: settingsDoc.date,
+    day: settingsDoc.date.includes('Friday') ? 'Friday' : 'Day',
+    time: settingsDoc.time,
+    venue: settingsDoc.venue,
+    round1Name: settingsDoc.round1Name,
+    round1MaximumMarks: settingsDoc.round1Max,
+    round2Name: settingsDoc.round2Name,
+    round2MaximumMarks: settingsDoc.round2Max,
+    totalMaximumMarks: settingsDoc.totalMax,
+    eventStatus: settingsDoc.eventStatus,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+}
+
+async function saveDbToMongo(data: DatabaseSchema) {
+  if (!mongoDb) {
+    return;
+  }
+
+  await syncRuntimeDbToMongo(data);
+  await ensureSeedData();
+  const settings = mongoDb.collection('eventSettings');
+  const settingsDoc = await settings.findOne({ eventName: data.settings.eventName || "Euphoria'26" });
+
+  if (!settingsDoc) {
+    await settings.insertOne({
+      _id: new ObjectId(),
+      eventName: data.settings.eventName || "Euphoria'26",
+      eventType: data.settings.technicalEvent,
+      collegeName: data.settings.college,
+      department: data.settings.department,
+      organizer: data.settings.organizedBy,
+      date: data.settings.date,
+      day: data.settings.date.includes('Friday') ? 'Friday' : 'Day',
+      time: data.settings.time,
+      venue: data.settings.venue,
+      round1Name: data.settings.round1Name,
+      round1MaximumMarks: data.settings.round1Max,
+      round2Name: data.settings.round2Name,
+      round2MaximumMarks: data.settings.round2Max,
+      totalMaximumMarks: data.settings.totalMax,
+      eventStatus: data.settings.eventStatus,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  } else {
+    await settings.updateOne(
+      { _id: settingsDoc._id },
+      {
+        $set: {
+          eventName: data.settings.eventName || "Euphoria'26",
+          eventType: data.settings.technicalEvent,
+          collegeName: data.settings.college,
+          department: data.settings.department,
+          organizer: data.settings.organizedBy,
+          date: data.settings.date,
+          day: data.settings.date.includes('Friday') ? 'Friday' : 'Day',
+          time: data.settings.time,
+          venue: data.settings.venue,
+          round1Name: data.settings.round1Name,
+          round1MaximumMarks: data.settings.round1Max,
+          round2Name: data.settings.round2Name,
+          round2MaximumMarks: data.settings.round2Max,
+          totalMaximumMarks: data.settings.totalMax,
+          eventStatus: data.settings.eventStatus,
+          updatedAt: new Date(),
+        },
+      }
+    );
+  }
+}
+
+async function loadDbFromMongo(): Promise<DatabaseSchema | null> {
+  if (!mongoDb) {
+    return null;
+  }
+
+  const [users, teams, teamMembers, evaluations, settingsDocs, tokenDocs] = await Promise.all([
+    mongoDb.collection('users').find({}).toArray(),
+    mongoDb.collection('teams').find({}).toArray(),
+    mongoDb.collection('teamMembers').find({}).toArray(),
+    mongoDb.collection('evaluations').find({}).toArray(),
+    mongoDb.collection('eventSettings').find({}).toArray(),
+    mongoDb.collection('tokens').find({}).toArray(),
+  ]);
+
+  const tokens = Object.fromEntries(
+    (tokenDocs || []).map((doc:any) => [doc.token, { username: doc.username, role: doc.role, expiresAt: Number(doc.expiresAt) }])
+  );
+
+  const loadedTeams: Team[] = await Promise.all(
+    teams.map(async (teamDoc: any) => {
+      const judgeDoc = teamDoc.assignedJudgeId ? await mongoDb!.collection('users').findOne({ _id: teamDoc.assignedJudgeId }) : null;
+      const members = (teamMembers || [])
+        .filter((m: any) => m.teamId && teamDoc._id && String(m.teamId) === String(teamDoc._id))
+        .map((m: any) => ({
+          id: m._id ? String(m._id) : `${teamDoc.teamNumber}_${Math.random()}`,
+          name: m.name,
+          registerNumber: m.registerNumber,
+          collegeName: m.collegeName,
+          phoneNumber: m.phoneNumber,
+          department: m.department,
+          academicYear: m.academicYear,
+          attendance: m.attendance === 'present' ? 'Present' : 'Absent',
+        }));
+      const evaluationDoc = evaluations.find((item: any) => item.teamId && teamDoc._id && String(item.teamId) === String(teamDoc._id));
+
+      return {
+        id: String(teamDoc.id || teamDoc._id),
+        teamNumber: String(teamDoc.teamNumber),
+        teamName: String(teamDoc.teamName),
+        assignedJudge: judgeDoc?.username || teamDoc.assignedJudgeName || 'Judge',
+        technicalQuizScore: evaluationDoc ? Number(evaluationDoc.technicalQuizScore) : null,
+        iotSimulationScore: evaluationDoc ? Number(evaluationDoc.iotSimulationScore) : null,
+        totalScore: evaluationDoc ? Number(evaluationDoc.totalScore) : null,
+        rank: null,
+        evaluationStatus: evaluationDoc?.status === 'evaluated' ? 'Evaluated' : 'Not Evaluated',
+        evaluatedAt: evaluationDoc?.evaluatedAt ? new Date(evaluationDoc.evaluatedAt).toISOString() : undefined,
+        createdAt: teamDoc.createdAt ? new Date(teamDoc.createdAt).toISOString() : new Date().toISOString(),
+        updatedAt: teamDoc.updatedAt ? new Date(teamDoc.updatedAt).toISOString() : new Date().toISOString(),
+        members,
+      };
+    })
+  );
+
+  const settings = (settingsDocs[0] || getInitialData().settings) as DatabaseSchema['settings'];
+
+  return {
+    users: (users || []).map((user: any) => ({
+      id: String(user._id),
+      username: user.username,
+      passwordHash: user.passwordHash,
+      role: user.role,
+      createdAt: user.createdAt ? new Date(user.createdAt).toISOString() : new Date().toISOString(),
+    })),
+    tokens,
+    settings: {
+      college: settings.college || 'MEENAKSHI SUNDARAJAN ENGINEERING COLLEGE',
+      autonomous: settings.autonomous || 'Autonomous',
+      managedBy: settings.managedBy || 'I.I.E.T. Society',
+      affiliatedTo: settings.affiliatedTo || 'Anna University',
+      department: settings.department || 'Department of Civil Engineering',
+      organizedBy: settings.organizedBy || 'Eco Design Club',
+      eventName: settings.eventName || "Euphoria'26",
+      technicalEvent: settings.technicalEvent || 'IoT Based Smart Cities Challenge',
+      date: settings.date || '25/09/2026 – Friday',
+      time: settings.time || '10:00 AM – 12:00 PM',
+      venue: settings.venue || 'MSEC Civil Block',
+      eventStatus: settings.eventStatus || 'Event Started',
+      round1Name: settings.round1Name || 'Technical Quiz',
+      round1Max: settings.round1Max || 50,
+      round2Name: settings.round2Name || 'IoT Based Simulation',
+      round2Max: settings.round2Max || 50,
+      totalMax: settings.totalMax || 100,
+      tieBreakerRule: settings.tieBreakerRule || '1. IoT Based Simulation Score → 2. Technical Quiz Score → 3. Admin Manual Resolution',
+    },
+    teams: loadedTeams,
+  };
+}
+
+async function writeAuditLog(userId: string | null, action: string, entityType: string, entityId: string | null, details: Record<string, any> = {}) {
+  if (!mongoDb) return;
+
+  await mongoDb.collection('auditLogs').insertOne({
+    _id: new ObjectId(),
+    userId: userId ? new ObjectId(userId) : null,
+    action,
+    entityType,
+    entityId: entityId ? new ObjectId(entityId) : null,
+    details,
+    createdAt: new Date(),
+  }).catch(() => undefined);
 }
 
 export interface TeamMember {
@@ -311,27 +751,41 @@ function getInitialData(): DatabaseSchema {
 
 // Database helper functions
 function readDb(): DatabaseSchema {
+  if (runtimeDb) {
+    return runtimeDb;
+  }
+
   if (!fs.existsSync(DB_FILE)) {
     const initial = getInitialData();
+    runtimeDb = initial;
     writeDb(initial);
     return initial;
   }
+
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
     const data = JSON.parse(raw);
+    runtimeDb = data;
     return data;
   } catch (err) {
     console.error('Failed reading db.json, resetting to initial state', err);
     const initial = getInitialData();
+    runtimeDb = initial;
     writeDb(initial);
     return initial;
   }
 }
 
 function writeDb(data: DatabaseSchema) {
+  runtimeDb = data;
+
   const tempFile = `${DB_FILE}.tmp`;
   fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), 'utf-8');
   fs.renameSync(tempFile, DB_FILE);
+
+  if (mongoDb) {
+    void saveDbToMongo(data);
+  }
 }
 
 // Recalculate automatic rankings with strict tie-breaking logic
@@ -379,7 +833,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -391,6 +845,17 @@ function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) 
   const session = db.tokens[token];
 
   if (!session || session.expiresAt < Date.now()) {
+    if (mongoDb) {
+      const mongoToken = await mongoDb.collection('tokens').findOne({ token });
+      if (!mongoToken || Number(mongoToken.expiresAt) < Date.now()) {
+        return res.status(403).json({ error: 'Session expired or invalid. Please log in again.' });
+      }
+      req.user = {
+        username: mongoToken.username,
+        role: mongoToken.role,
+      };
+      return next();
+    }
     return res.status(403).json({ error: 'Session expired or invalid. Please log in again.' });
   }
 
@@ -420,7 +885,7 @@ function requireJudge(req: AuthRequest, res: Response, next: NextFunction) {
 // ----------------------------------------------------
 
 // 1. Auth: Login
-app.post('/api/auth/login', (req: Request, res: Response) => {
+app.post('/api/auth/login', async (req: Request, res: Response) => {
   const { username, password, portalType } = req.body;
 
   if (!username || !password || !portalType) {
@@ -432,16 +897,34 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     (u) => u.username.toLowerCase() === username.trim().toLowerCase() && u.role === portalType
   );
 
+  if (!targetUser && mongoDb) {
+    const mongoUser = await mongoDb.collection('users').findOne({ username: String(username).trim(), role: portalType });
+    if (!mongoUser) {
+      return res.status(401).json({ error: 'Invalid credentials or unauthorized portal access' });
+    }
+    if (!comparePassword(password, mongoUser.passwordHash)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = 'tok_' + crypto.randomBytes(24).toString('hex');
+    await mongoDb.collection('tokens').insertOne({
+      token,
+      username: mongoUser.username,
+      role: mongoUser.role,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    });
+    await writeAuditLog(String(mongoUser._id), portalType === 'admin' ? 'ADMIN_LOGIN' : 'JUDGE_LOGIN', 'users', String(mongoUser._id), { username: mongoUser.username });
+    return res.json({ token, username: mongoUser.username, role: mongoUser.role });
+  }
+
   if (!targetUser) {
     return res.status(401).json({ error: 'Invalid credentials or unauthorized portal access' });
   }
 
-  const inputHash = hashPassword(password);
-  if (inputHash !== targetUser.passwordHash) {
+  if (!comparePassword(password, targetUser.passwordHash)) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  // Generate session token valid for 24 hours
   const token = 'tok_' + crypto.randomBytes(24).toString('hex');
   db.tokens[token] = {
     username: targetUser.username,
@@ -449,6 +932,8 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     expiresAt: Date.now() + 24 * 60 * 60 * 1000,
   };
   writeDb(db);
+
+  await writeAuditLog(null, portalType === 'admin' ? 'ADMIN_LOGIN' : 'JUDGE_LOGIN', 'users', null, { username: targetUser.username });
 
   return res.json({
     token,
@@ -869,7 +1354,32 @@ app.put('/api/judge/teams/:id/evaluate', authenticateToken, requireJudge, (req: 
 // VITE / STATIC SERVING
 // ----------------------------------------------------
 
+async function initializeDatabase() {
+  try {
+    await connectMongoDb();
+    const mongoData = await loadDbFromMongo();
+
+    if (mongoData) {
+      runtimeDb = mongoData;
+      fs.writeFileSync(DB_FILE, JSON.stringify(mongoData, null, 2), 'utf-8');
+      console.log('Loaded application data from MongoDB.');
+      return;
+    }
+
+    const initialData = getInitialData();
+    runtimeDb = initialData;
+    await saveDbToMongo(initialData);
+    fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2), 'utf-8');
+    console.log('Initialized default application data in MongoDB.');
+  } catch (error) {
+    console.error('MongoDB connection failed. Please verify MONGODB_URI and Atlas access before starting the app.', error);
+    throw error;
+  }
+}
+
 async function startServer() {
+  await initializeDatabase();
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -885,7 +1395,9 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Euphoria'26 Event Server running on http://0.0.0.0:${PORT}`);
+    console.log(
+      `Euphoria'26 Event Server running on http://0.0.0.0:${PORT} | NODE_ENV=${process.env.NODE_ENV || 'development'}`
+    );
   });
 }
 
